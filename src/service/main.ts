@@ -1,14 +1,17 @@
 // Runs under the app's own Node runtime, on 127.0.0.1, reachable only through
-// OpenChamber's proxy. `/snapshot` reads; `/stop` ends a dev server or what
-// runs in the terminal, and decides itself what that may include (stop.ts).
+// OpenChamber's proxy. `/snapshot` reads; `/status` is the same reading as the
+// Work Status section OpenChamber draws (status-view.ts); `/stop` ends a dev
+// server or what runs in the terminal, and decides itself what that may
+// include (stop.ts).
 //
-// Sampling runs while someone is looking. Each `/snapshot` request keeps it
+// Sampling runs while someone is looking. Each read keeps it
 // going; with no request for IDLE_STOP_MS the loop stops, so a closed panel
 // costs nothing.
 import http from 'node:http';
 
 import { SAMPLE_INTERVAL_MS, Sampler } from './sampler.ts';
 import { createProcessSource } from './sources.ts';
+import { statusView } from './status-view.ts';
 import { parseStopTarget } from './stop.ts';
 import type { Snapshot } from '../shared/snapshot.ts';
 
@@ -116,15 +119,22 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  if (req.method !== 'GET' || url.pathname !== '/snapshot') {
+  // `/snapshot` feeds the panel and the section's frame; `/status` is the
+  // section OpenChamber draws itself. Both keep the sampler running.
+  const view = url.pathname === '/status';
+  if (req.method !== 'GET' || (url.pathname !== '/snapshot' && !view)) {
     json(res, 404, { error: 'not-found' });
     return;
   }
   lastRequestAt = Date.now();
-  ensureRunning().then(
-    () => (latest ? json(res, 200, latest) : json(res, 503, { error: 'no-sample' })),
-    () => json(res, 500, { error: 'sample-failed' }),
-  );
+  const locale = url.searchParams.get('locale') ?? 'en';
+  ensureRunning().then(() => {
+    if (!latest) {
+      json(res, 503, { error: 'no-sample' });
+      return;
+    }
+    json(res, 200, view ? statusView(latest, locale) : latest);
+  }).catch(() => json(res, 500, { error: 'sample-failed' }));
 });
 
 const shutdown = (): void => {

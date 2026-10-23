@@ -2,8 +2,13 @@
 import type { GroupId, ProcessRow } from './snapshot.ts';
 
 let locale = 'en';
+/** A tag Intl does not know (`en_US`) falls back to English instead of throwing on every number. */
 export const setLocale = (next: string): void => {
-  locale = next || 'en';
+  try {
+    locale = Intl.NumberFormat.supportedLocalesOf(next)[0] ?? 'en';
+  } catch {
+    locale = 'en';
+  }
 };
 
 const number = (value: number, digits: number): string => new Intl.NumberFormat(locale, {

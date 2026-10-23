@@ -942,6 +942,96 @@ var createProcessSource = () => {
   return psSource();
 };
 
+// src/shared/format.ts
+var locale = "en";
+var setLocale = (next) => {
+  try {
+    locale = Intl.NumberFormat.supportedLocalesOf(next)[0] ?? "en";
+  } catch {
+    locale = "en";
+  }
+};
+var number = (value, digits) => new Intl.NumberFormat(locale, {
+  minimumFractionDigits: digits,
+  maximumFractionDigits: digits
+}).format(value);
+var formatBytes = (bytes) => {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = Math.max(0, bytes);
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = unit >= 3 && value < 100 ? 1 : 0;
+  return `${number(value, digits)} ${units[unit]}`;
+};
+var formatPercent = (value) => {
+  if (value === null)
+    return "–";
+  if (value > 0 && value < 0.1)
+    return "<0.1%";
+  return `${number(value, value < 10 ? 1 : 0)}%`;
+};
+
+// src/service/status-view.ts
+var PORTS_SHOWN = 6;
+var clampShare = (value) => Math.min(100, Math.max(0, value));
+var statusView = (snapshot, locale) => {
+  setLocale(locale);
+  const { system, app } = snapshot;
+  const rows = [];
+  const processesMissing = snapshot.warnings.includes("processes-unavailable");
+  if (processesMissing) {
+    rows.push({ kind: "note", id: "processes", text: "Could not read the process list; showing system totals only.", tone: "warning" });
+  } else {
+    const history = snapshot.history.app.memory;
+    rows.push({
+      kind: "line",
+      id: "app",
+      label: "OpenChamber",
+      content: {
+        kind: "chart",
+        values: history,
+        max: Math.max(1, app.memory, ...history) * 1.15,
+        tone: "accent",
+        unit: "bytes",
+        step: snapshot.intervalMs / 1000
+      },
+      value: `${formatBytes(app.memory)} · ${formatPercent(app.cpu)}`,
+      tooltip: "Memory and CPU of OpenChamber, OpenCode, and everything they started. CPU counts 100% per core."
+    });
+  }
+  rows.push({
+    kind: "line",
+    id: "cpu",
+    label: "CPU",
+    content: { kind: "bar", value: clampShare(system.cpu ?? 0), tone: "info" },
+    value: formatPercent(system.cpu)
+  });
+  rows.push({
+    kind: "line",
+    id: "memory",
+    label: "Memory",
+    content: { kind: "bar", value: clampShare(system.memoryUsed / Math.max(1, system.memoryTotal) * 100), tone: "success" },
+    value: `${formatBytes(system.memoryUsed)} / ${formatBytes(system.memoryTotal)}`
+  });
+  const listening = [...new Set(snapshot.servers.flatMap((server) => server.ports))].sort((a, b) => a - b);
+  if (listening.length > 0 && !processesMissing) {
+    rows.push({
+      kind: "line",
+      id: "servers",
+      label: "Dev servers",
+      content: {
+        kind: "chips",
+        chips: listening.slice(0, PORTS_SHOWN).map((port) => ({ id: `port-${port}`, label: `:${port}`, url: `http://localhost:${port}` }))
+      },
+      ...listening.length > PORTS_SHOWN ? { value: `+${listening.length - PORTS_SHOWN}` } : {}
+    });
+  }
+  return { rows };
+};
+
 // src/service/main.ts
 var port = Number(process.env.OPENCHAMBER_SERVICE_PORT);
 var token = process.env.OPENCHAMBER_SERVICE_TOKEN ?? "";
@@ -1036,12 +1126,20 @@ var server = http.createServer((req, res) => {
     });
     return;
   }
-  if (req.method !== "GET" || url.pathname !== "/snapshot") {
+  const view = url.pathname === "/status";
+  if (req.method !== "GET" || url.pathname !== "/snapshot" && !view) {
     json(res, 404, { error: "not-found" });
     return;
   }
   lastRequestAt = Date.now();
-  ensureRunning().then(() => latest ? json(res, 200, latest) : json(res, 503, { error: "no-sample" }), () => json(res, 500, { error: "sample-failed" }));
+  const locale = url.searchParams.get("locale") ?? "en";
+  ensureRunning().then(() => {
+    if (!latest) {
+      json(res, 503, { error: "no-sample" });
+      return;
+    }
+    json(res, 200, view ? statusView(latest, locale) : latest);
+  }).catch(() => json(res, 500, { error: "sample-failed" }));
 });
 var shutdown = () => {
   stop();
