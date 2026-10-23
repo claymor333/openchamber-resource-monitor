@@ -15,7 +15,7 @@ import {
   processLabel,
   setLocale,
 } from '../shared/format.ts';
-import { el } from '../shared/dom.ts';
+import { el, reconcile, setText, type Keyed } from '../shared/dom.ts';
 import { BASE_STYLE, PANEL_STYLE } from '../shared/style.ts';
 import { HISTORY_POINTS, type DevServer, type GroupId, type Job, type ProcessGroup, type ProcessRow, type Snapshot } from '../shared/snapshot.ts';
 
@@ -134,6 +134,9 @@ const stopButton = (label: string, question: string, target: StopRequest): HTMLB
     button.textContent = 'Stopping…';
     void requestStop(host, target).then((ok) => {
       if (!ok) showStopError();
+      // The row outlives the answer when its process is still there.
+      button.disabled = false;
+      disarm();
       refresh();
     });
   });
@@ -141,46 +144,104 @@ const stopButton = (label: string, question: string, target: StopRequest): HTMLB
 };
 
 // ----- Rows -----
+// Every list is reconciled by key: a sample updates the numbers of the rows
+// it already has, so a row under the pointer, a focused row and a Stop
+// waiting for its second click stay as they are between samples.
 
-// Below one percent of a core a number is noise; it stays readable but recedes.
-const cpuCell = (value: number | null): HTMLElement => el('span', value !== null && value >= 1 ? 'cell num' : 'cell num quiet', formatPercent(value));
-const memoryCell = (value: number): HTMLElement => el('span', 'cell num', formatBytes(value));
+type Role = 'root' | 'self' | 'other';
 
-const textBlock = (title: string, detail: string): HTMLElement => {
-  const titleLine = el('span', 'title-line', '', [el('span', 'pname', title)]);
-  const block = el('div', 'who', '', [titleLine]);
-  if (detail) block.append(el('span', 'pdetail', detail));
-  return block;
+let rootPid = 0;
+const roleOf = (row: ProcessRow): Role => (row.pid === rootPid ? 'root' : row.label === 'Resource Monitor' && row.ppid === rootPid ? 'self' : 'other');
+
+/** A row's CPU and memory, updated in place. */
+const numberCells = () => {
+  const cpu = el('span');
+  const memory = el('span', 'cell num');
+  const set = (cpuValue: number | null, memoryValue: number): void => {
+    // Below one percent of a core a number is noise; it stays readable but recedes.
+    const className = cpuValue !== null && cpuValue >= 1 ? 'cell num' : 'cell num quiet';
+    if (cpu.className !== className) cpu.className = className;
+    setText(cpu, formatPercent(cpuValue));
+    setText(memory, formatBytes(memoryValue));
+  };
+  return { cpu, memory, set };
 };
 
-const processRow = (process: ProcessRow, role: 'root' | 'self' | 'other', className = 'row'): HTMLElement => {
+const textBlock = (title: string, detail: string) => {
+  const titleLine = el('span', 'title-line', '', [el('span', 'pname', title)]);
+  const detailLine = el('span', 'pdetail');
+  const setDetail = (text: string): void => {
+    setText(detailLine, text);
+    detailLine.hidden = text === '';
+  };
+  setDetail(detail);
+  return { element: el('div', 'who', '', [titleLine, detailLine]), setDetail };
+};
+
+const processKey = (process: ProcessRow, role: Role): string => {
   const { title, detail } = processLabel(process, role);
-  const row = el('div', className, '', [textBlock(title, detail), actionCell(), cpuCell(process.cpu), memoryCell(process.memory)]);
-  row.title = `${process.name} · pid ${process.pid}${process.command ? `\n${process.command}` : ''}`;
-  return row;
+  return [process.pid, role, title, detail, process.name, process.command].join('\u0000');
+};
+
+const processRow = (process: ProcessRow, role: Role, className = 'row'): Keyed<ProcessRow> => {
+  const { title, detail } = processLabel(process, role);
+  const cells = numberCells();
+  cells.set(process.cpu, process.memory);
+  const element = el('div', className, '', [textBlock(title, detail).element, actionCell(), cells.cpu, cells.memory]);
+  element.title = `${process.name} · pid ${process.pid}${process.command ? `\n${process.command}` : ''}`;
+  return { element, update: (next) => cells.set(next.cpu, next.memory) };
 };
 
 const openJobs = new Set<number>();
 
-const jobRow = (job: Job, stoppable: boolean): HTMLElement => {
-  // A job with nothing worth unfolding is one plain row.
-  const foldable = job.members.length > 0 && job.count > 1;
-  const open = foldable && openJobs.has(job.pid);
-  const detail = jobDetail(job);
+// A job with nothing worth unfolding is one plain row.
+const isFoldable = (job: Job): boolean => job.members.length > 0 && job.count > 1;
+
+const jobKey = (job: Job, stoppable: boolean): string => [job.pid, job.name, job.title, job.command, stoppable, isFoldable(job)].join('\u0000');
+
+const memberKey = (member: ProcessRow): string => processKey(member, 'other');
+const memberRow = (member: ProcessRow): Keyed<ProcessRow> => processRow(member, 'other', 'row member');
+
+const jobRow = (job: Job, stoppable: boolean): Keyed<Job> => {
+  const foldable = isFoldable(job);
   const stop = stoppable ? stopButton('Stop', `Stop ${job.title}?`, { kind: 'job', pid: job.pid, name: job.name }) : undefined;
-  const line = el('div', foldable ? 'row job foldable' : 'row job', '', [textBlock(job.title, detail), actionCell(stop), cpuCell(job.cpu), memoryCell(job.memory)]);
+  const cells = numberCells();
+  const text = textBlock(job.title, jobDetail(job));
+  const line = el('div', foldable ? 'row job foldable' : 'row job', '', [text.element, actionCell(stop), cells.cpu, cells.memory]);
   line.title = job.command || job.title;
-  line.classList.toggle('open', open);
   // Unfolded, commands wrap in full instead of ending in an ellipsis.
-  const wrapper = el('div', open ? 'job-wrap open' : 'job-wrap', '', [line]);
+  const wrapper = el('div', 'job-wrap', '', [line]);
+  const more = el('div', 'more');
+  const members = el('div', 'members', '', [more]);
+  const memberRows = new Map<string, Keyed<ProcessRow>>();
+  let current = job;
+
+  const draw = (next: Job): void => {
+    current = next;
+    cells.set(next.cpu, next.memory);
+    text.setDetail(jobDetail(next));
+    const open = foldable && openJobs.has(next.pid);
+    line.classList.toggle('open', open);
+    wrapper.classList.toggle('open', open);
+    if (foldable) line.setAttribute('aria-expanded', String(open));
+    if (!open) {
+      members.remove();
+      return;
+    }
+    reconcile(members, next.members, memberKey, memberRow, memberRows);
+    const quiet = next.count - next.members.length;
+    more.hidden = quiet <= 0;
+    setText(more, quiet === 1 ? '1 more process, idle' : `${quiet} more processes, idle`);
+    if (members.parentElement !== wrapper) wrapper.append(members);
+  };
+
   if (foldable) {
     line.tabIndex = 0;
     line.setAttribute('role', 'button');
-    line.setAttribute('aria-expanded', String(open));
     const toggle = (): void => {
-      if (openJobs.has(job.pid)) openJobs.delete(job.pid);
-      else openJobs.add(job.pid);
-      if (lastSnapshot) render(lastSnapshot);
+      if (openJobs.has(current.pid)) openJobs.delete(current.pid);
+      else openJobs.add(current.pid);
+      draw(current);
     };
     line.addEventListener('click', toggle);
     line.addEventListener('keydown', (event) => {
@@ -190,13 +251,8 @@ const jobRow = (job: Job, stoppable: boolean): HTMLElement => {
       }
     });
   }
-  if (open) {
-    const members = el('div', 'members', '', job.members.map((member) => processRow(member, 'other', 'row member')));
-    const quiet = job.count - job.members.length;
-    if (quiet > 0) members.append(el('div', 'more', quiet === 1 ? '1 more process, idle' : `${quiet} more processes, idle`));
-    wrapper.append(members);
-  }
-  return wrapper;
+  draw(job);
+  return { element: wrapper, update: draw };
 };
 
 // Groups start unfolded; the ones the user folds are remembered on this device.
@@ -221,23 +277,63 @@ const loadCollapsed = async (): Promise<void> => {
   }
 };
 
-const groupBlock = (group: ProcessGroup, roleOf: (row: ProcessRow) => 'root' | 'self' | 'other'): HTMLElement => {
+type GroupItem = { kind: 'process'; row: ProcessRow; role: Role } | { kind: 'job'; job: Job; stoppable: boolean };
+
+const groupItems = (group: ProcessGroup): GroupItem[] => {
+  // Terminal jobs can be stopped; an agent's job only while it serves a port,
+  // since OpenCode's provider CLIs and MCP servers are jobs too.
+  const stoppable = (job: Job): boolean => group.id === 'terminals' || (group.id === 'opencode' && job.ports.length > 0);
+  return [
+    ...group.processes.map((row): GroupItem => ({ kind: 'process', row, role: roleOf(row) })),
+    ...group.jobs.map((job): GroupItem => ({ kind: 'job', job, stoppable: stoppable(job) })),
+  ];
+};
+
+const itemKey = (item: GroupItem): string => (item.kind === 'process' ? `process\u0000${processKey(item.row, item.role)}` : `job\u0000${jobKey(item.job, item.stoppable)}`);
+
+const itemRow = (item: GroupItem): Keyed<GroupItem> => {
+  if (item.kind === 'process') {
+    const row = processRow(item.row, item.role);
+    return { element: row.element, update: (next) => { if (next.kind === 'process') row.update(next.row); } };
+  }
+  const row = jobRow(item.job, item.stoppable);
+  return { element: row.element, update: (next) => { if (next.kind === 'job') row.update(next.job); } };
+};
+
+const hasStopAll = (group: ProcessGroup): boolean => group.id === 'terminals' && group.jobs.length > 0;
+const groupKey = (group: ProcessGroup): string => `${group.id}\u0000${hasStopAll(group)}`;
+
+const groupBlock = (group: ProcessGroup): Keyed<ProcessGroup> => {
   const dot = el('span', 'dot');
   dot.style.background = COLORS[group.id];
-  const stopAll = group.id === 'terminals' && group.jobs.length > 0
-    ? stopButton('Stop all', 'Stop everything running in the terminal?', { kind: 'terminals' })
-    : undefined;
-  const name = el('span', 'gname', '', [dot, el('b', '', GROUP_LABELS[group.id]), el('span', 'count', String(group.count))]);
-  const collapsed = collapsedGroups.has(group.id);
-  const header = el('div', collapsed ? 'group-head foldable' : 'group-head foldable open', '', [name, actionCell(stopAll), cpuCell(group.cpu), memoryCell(group.memory)]);
+  const stopAll = hasStopAll(group) ? stopButton('Stop all', 'Stop everything running in the terminal?', { kind: 'terminals' }) : undefined;
+  const count = el('span', 'count');
+  const name = el('span', 'gname', '', [dot, el('b', '', GROUP_LABELS[group.id]), count]);
+  const cells = numberCells();
+  const header = el('div', 'group-head foldable', '', [name, actionCell(stopAll), cells.cpu, cells.memory]);
   header.tabIndex = 0;
   header.setAttribute('role', 'button');
-  header.setAttribute('aria-expanded', String(!collapsed));
+  const block = el('div', 'group', '', [header]);
+  block.style.setProperty('--group-color', COLORS[group.id]);
+  const rows = new Map<string, Keyed<GroupItem>>();
+  let current = group;
+
+  const draw = (next: ProcessGroup): void => {
+    current = next;
+    setText(count, String(next.count));
+    cells.set(next.cpu, next.memory);
+    const collapsed = collapsedGroups.has(next.id);
+    header.classList.toggle('open', !collapsed);
+    header.setAttribute('aria-expanded', String(!collapsed));
+    // The rows follow the header in the block.
+    reconcile(block, collapsed ? [] : groupItems(next), itemKey, itemRow, rows, 1);
+  };
+
   const toggle = (): void => {
-    if (collapsedGroups.has(group.id)) collapsedGroups.delete(group.id);
-    else collapsedGroups.add(group.id);
+    if (collapsedGroups.has(current.id)) collapsedGroups.delete(current.id);
+    else collapsedGroups.add(current.id);
     saveCollapsed();
-    if (lastSnapshot) render(lastSnapshot);
+    draw(current);
   };
   header.addEventListener('click', toggle);
   header.addEventListener('keydown', (event) => {
@@ -246,46 +342,61 @@ const groupBlock = (group: ProcessGroup, roleOf: (row: ProcessRow) => 'root' | '
       toggle();
     }
   });
-  // Terminal jobs can be stopped; an agent's job only while it serves a port,
-  // since OpenCode's provider CLIs and MCP servers are jobs too.
-  const stoppable = (job: Job): boolean => group.id === 'terminals' || (group.id === 'opencode' && job.ports.length > 0);
-  const block = el('div', 'group', '', collapsed ? [header] : [
-    header,
-    ...group.processes.map((process) => processRow(process, roleOf(process))),
-    ...group.jobs.map((job) => jobRow(job, stoppable(job))),
-  ]);
-  block.style.setProperty('--group-color', COLORS[group.id]);
-  return block;
+  draw(group);
+  return { element: block, update: draw };
 };
 
-const serverRow = (server: DevServer): HTMLElement => {
+const serverKey = (server: DevServer): string => [
+  server.pid, server.name, server.group, server.ports.join(','), server.command,
+  server.job?.pid ?? '', server.job?.name ?? '', server.job?.title ?? '',
+].join('\u0000');
+
+const serverRow = (server: DevServer): Keyed<DevServer> => {
   const ports = server.ports.map((port) => portButton(host, port));
   const title = el('div', 'title-line', '', [...ports, el('span', 'pname strong', server.name), el('span', 'origin', SERVER_ORIGIN[server.group])]);
   const stop = server.job ? stopButton('Stop', `Stop ${server.job.title}?`, { kind: 'job', pid: server.job.pid, name: server.job.name }) : undefined;
   const who = el('div', 'who', '', [title]);
   const detail = server.job?.title ?? '';
   if (detail) who.append(el('span', 'pdetail', detail));
-  const row = el('div', 'row server', '', [who, actionCell(stop), cpuCell(server.cpu), memoryCell(server.memory)]);
+  const cells = numberCells();
+  cells.set(server.cpu, server.memory);
+  const row = el('div', 'row server', '', [who, actionCell(stop), cells.cpu, cells.memory]);
   row.title = `pid ${server.pid}${server.command ? `\n${server.command}` : ''}`;
-  return row;
+  return { element: row, update: (next) => cells.set(next.cpu, next.memory) };
 };
 
-const renderStack = (target: HTMLElement, parts: { value: number; color: string; label: string }[], total: number): void => {
-  target.replaceChildren(...parts.filter((part) => part.value > 0).map((part) => {
-    const span = el('span');
-    span.style.width = `${Math.min(100, (part.value / Math.max(1, total)) * 100)}%`;
-    span.style.background = part.color;
-    span.title = part.label;
-    return span;
-  }));
+interface StackPart { id: GroupId; value: number; total: number }
+
+const stackPart = (part: StackPart): Keyed<StackPart> => {
+  const span = el('span');
+  span.style.background = COLORS[part.id];
+  span.title = GROUP_LABELS[part.id];
+  const update = (next: StackPart): void => {
+    span.style.width = `${Math.min(100, (next.value / Math.max(1, next.total)) * 100)}%`;
+  };
+  update(part);
+  return { element: span, update };
+};
+
+const legendRow = (group: ProcessGroup): Keyed<ProcessGroup> => {
+  const swatch = el('span', 'swatch');
+  swatch.style.background = COLORS[group.id];
+  const count = el('span', 'muted');
+  const cpuValue = el('span', 'value num muted');
+  const memoryValue = el('span', 'value num');
+  const update = (next: ProcessGroup): void => {
+    setText(count, ` · ${next.count} ${next.count === 1 ? 'process' : 'processes'}`);
+    setText(cpuValue, formatPercent(next.cpu));
+    setText(memoryValue, formatBytes(next.memory));
+  };
+  update(group);
+  return { element: el('div', 'legend-row', '', [swatch, el('span', 'name', GROUP_LABELS[group.id], [count]), cpuValue, memoryValue]), update };
 };
 
 const WARNING_TEXT = {
   'processes-unavailable': 'The process list could not be read just now. OpenChamber\'s numbers are from the last reading that worked.',
   'ports-unavailable': 'Listening ports could not be read, so dev servers are not detected.',
 } as const;
-
-const groupColor = (id: GroupId): string => COLORS[id];
 
 let failure: PollFailure | null = null;
 let stopError = false;
@@ -302,7 +413,7 @@ const updateBanner = (): void => {
       : problems.join(' ');
   banner.hidden = text === '';
   banner.classList.toggle('error', failure !== null || stopError);
-  banner.textContent = text;
+  setText(banner, text);
 };
 
 function showStopError(): void {
@@ -315,57 +426,55 @@ function showStopError(): void {
   updateBanner();
 }
 
-const render = (snapshot: Snapshot): void => {
+const stackParts = new Map<string, Keyed<StackPart>>();
+const legendRows = new Map<string, Keyed<ProcessGroup>>();
+const serverRows = new Map<string, Keyed<DevServer>>();
+const groupBlocks = new Map<string, Keyed<ProcessGroup>>();
+const outsideRows = new Map<string, Keyed<ProcessRow>>();
+
+function render(snapshot: Snapshot): void {
   lastSnapshot = snapshot;
   const { system, app } = snapshot;
+  rootPid = app.rootPid;
 
-  hostName.textContent = system.hostname;
-  hostMeta.textContent = [platformName(system.platform), system.arch, system.cpuModel, `up ${formatUptime(system.uptimeSeconds)}`].filter(Boolean).join(' · ');
-  live.textContent = `Live · every ${INTERVAL_SECONDS} s`;
+  setText(hostName, system.hostname);
+  setText(hostMeta, [platformName(system.platform), system.arch, system.cpuModel, `up ${formatUptime(system.uptimeSeconds)}`].filter(Boolean).join(' · '));
+  setText(live, `Live · every ${INTERVAL_SECONDS} s`);
   live.classList.remove('stale');
 
-  cpu.value.textContent = formatPercent(system.cpu);
-  cpu.side.textContent = `${system.cores} cores`;
-  cpu.sub.textContent = system.load ? `Load ${system.load.map((value) => value.toFixed(2)).join(' · ')}` : 'All cores together';
+  setText(cpu.value, formatPercent(system.cpu));
+  setText(cpu.side, `${system.cores} cores`);
+  setText(cpu.sub, system.load ? `Load ${system.load.map((value) => value.toFixed(2)).join(' · ')}` : 'All cores together');
   cpu.chart.update(snapshot.history.system.cpu, 100);
 
-  memory.value.textContent = formatBytes(system.memoryUsed);
-  memory.side.textContent = formatPercent((system.memoryUsed / Math.max(1, system.memoryTotal)) * 100);
-  memory.sub.textContent = `of ${formatBytes(system.memoryTotal)} · ${formatBytes(Math.max(0, system.memoryTotal - system.memoryUsed))} free`;
+  setText(memory.value, formatBytes(system.memoryUsed));
+  setText(memory.side, formatPercent((system.memoryUsed / Math.max(1, system.memoryTotal)) * 100));
+  setText(memory.sub, `of ${formatBytes(system.memoryTotal)} · ${formatBytes(Math.max(0, system.memoryTotal - system.memoryUsed))} free`);
   memory.chart.update(snapshot.history.system.memory, system.memoryTotal);
 
-  appValue.textContent = formatBytes(app.memory);
-  appCpuValue.textContent = `${formatPercent(app.cpu)} CPU`;
+  setText(appValue, formatBytes(app.memory));
+  setText(appCpuValue, `${formatPercent(app.cpu)} CPU`);
   appChart.update(snapshot.history.app.memory, Math.max(app.memory, ...snapshot.history.app.memory) * 1.15);
-  renderStack(appStack, app.groups.map((group) => ({ value: group.memory, color: groupColor(group.id), label: GROUP_LABELS[group.id] })), app.memory);
-  appLegend.replaceChildren(...app.groups.map((group) => {
-    const swatch = el('span', 'swatch');
-    swatch.style.background = groupColor(group.id);
-    return el('div', 'legend-row', '', [
-      swatch,
-      el('span', 'name', GROUP_LABELS[group.id], [el('span', 'muted', ` · ${group.count} ${group.count === 1 ? 'process' : 'processes'}`)]),
-      el('span', 'value num muted', formatPercent(group.cpu)),
-      el('span', 'value num', formatBytes(group.memory)),
-    ]);
-  }));
+  const parts = app.groups.filter((group) => group.memory > 0).map((group): StackPart => ({ id: group.id, value: group.memory, total: app.memory }));
+  reconcile(appStack, parts, (part) => part.id, stackPart, stackParts);
+  reconcile(appLegend, app.groups, (group) => group.id, legendRow, legendRows);
 
-  serversCount.textContent = snapshot.servers.length > 0 ? String(snapshot.servers.length) : '';
-  serversList.replaceChildren(...snapshot.servers.map(serverRow));
+  setText(serversCount, snapshot.servers.length > 0 ? String(snapshot.servers.length) : '');
+  reconcile(serversList, snapshot.servers, serverKey, serverRow, serverRows);
   serversList.hidden = snapshot.servers.length === 0;
   serversEmpty.hidden = snapshot.servers.length > 0;
 
-  const roleOf = (row: ProcessRow): 'root' | 'self' | 'other' => (row.pid === app.rootPid ? 'root' : row.label === 'Resource Monitor' && row.ppid === app.rootPid ? 'self' : 'other');
-  groupsBox.replaceChildren(...app.groups.map((group) => groupBlock(group, roleOf)));
+  reconcile(groupsBox, app.groups, groupKey, groupBlock, groupBlocks);
   // Folded state for jobs that ended would only grow.
   const livePids = new Set(app.groups.flatMap((group) => group.jobs.map((job) => job.pid)));
   for (const pid of openJobs) if (!livePids.has(pid)) openJobs.delete(pid);
 
   outsideSection.hidden = snapshot.outside.length === 0;
-  outsideBox.replaceChildren(...snapshot.outside.map((row) => processRow(row, 'other')));
+  reconcile(outsideBox, snapshot.outside, (row) => processKey(row, 'other'), (row) => processRow(row, 'other'), outsideRows);
 
   problems = snapshot.warnings.map((warning) => WARNING_TEXT[warning]);
   updateBanner();
-};
+}
 
 const showFailure = (next: PollFailure): void => {
   failure = next;
