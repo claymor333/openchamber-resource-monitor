@@ -3,7 +3,10 @@
 import { HostRequestError, type HostClient } from '@openchamber/sdk';
 
 import { el } from './dom.ts';
+import { isMobileResourceMonitorFrame, MOBILE_FRAME_NAME, portPresentation } from './port.ts';
 import type { Snapshot } from './snapshot.ts';
+
+export { isMobileResourceMonitorFrame, MOBILE_FRAME_NAME, portPresentation };
 
 export const POLL_MS = 2_000;
 
@@ -50,14 +53,22 @@ export const requestStop = async (host: HostClient, target: StopRequest): Promis
   }
 };
 
-/** A dev server's port: a click opens it, in the desktop app beside the chat. */
-export const portButton = (host: HostClient, port: number): HTMLButtonElement => {
-  const button = el('button', 'port', `:${port}`);
+/** A server port is clickable only when the host can preview it on the server. */
+export const portButton = (host: HostClient, port: number, mobileSurface = false): HTMLElement => {
+  const presentation = portPresentation(port, mobileSurface);
+  if (presentation.kind === 'info') {
+    const info = el('span', 'port port-readonly', presentation.label);
+    info.dir = 'ltr';
+    return info;
+  }
+
+  const button = el('button', 'port', presentation.label);
   button.type = 'button';
-  button.title = `Open http://localhost:${port}`;
+  button.dir = 'ltr';
+  button.title = `Open ${presentation.href}`;
   button.addEventListener('click', (event) => {
     event.stopPropagation();
-    void host.openUrl(`http://localhost:${port}`).catch(() => undefined);
+    void host.openUrl(presentation.href).catch(() => undefined);
   });
   return button;
 };

@@ -2,11 +2,21 @@ import { connectHost } from '@openchamber/sdk';
 import { applyHostReady } from '@openchamber/sdk/ui';
 
 import { mountChart } from '../shared/chart.ts';
-import { FAILURE_TEXT, POLL_MS, portButton, requestStop, startPolling, type PollFailure, type StopRequest } from '../shared/client.ts';
+import {
+  FAILURE_TEXT,
+  isMobileResourceMonitorFrame,
+  POLL_MS,
+  portButton,
+  requestStop,
+  startPolling,
+  type PollFailure,
+  type StopRequest,
+} from '../shared/client.ts';
 import {
   COLORS,
   GROUP_LABELS,
   SERVER_ORIGIN,
+  connectedHostLabel,
   formatBytes,
   formatPercent,
   formatUptime,
@@ -17,9 +27,11 @@ import {
 } from '../shared/format.ts';
 import { el, reconcile, setText, type Keyed } from '../shared/dom.ts';
 import { BASE_STYLE, PANEL_STYLE } from '../shared/style.ts';
+import { applyHostLocale } from '../shared/locale.ts';
 import { HISTORY_POINTS, type DevServer, type GroupId, type Job, type ProcessGroup, type ProcessRow, type Snapshot } from '../shared/snapshot.ts';
 
 const host = connectHost();
+let mobileSurface = isMobileResourceMonitorFrame(window.name);
 const root = document.querySelector<HTMLElement>('#root');
 if (!root) throw new Error('Missing #root');
 const style = document.createElement('style');
@@ -33,18 +45,28 @@ const INTERVAL_SECONDS = POLL_MS / 1000;
 const banner = el('div', 'banner');
 banner.hidden = true;
 
-const hostName = el('div', 'host-name', 'This machine');
+const hostScope = el('span', 'host-scope');
+hostScope.hidden = true;
+hostScope.dir = 'auto';
+const hostNameValue = el('span', 'host-name-value', '–');
+hostNameValue.dir = 'auto';
+const hostName = el('div', 'host-name', '', [hostScope, hostNameValue]);
 const hostMeta = el('div', 'host-meta', 'Reading…');
+hostMeta.dir = 'auto';
 const live = el('div', 'live stale', 'Starting');
+live.dir = 'auto';
 const head = el('div', 'head');
 head.append(el('div', 'titles', '', [hostName, hostMeta]), live);
 
 const statCard = (label: string, color: string, format: (value: number) => string) => {
   const value = el('span', 'big num', '–');
   const side = el('span', 'sub num');
+  value.dir = 'auto';
+  side.dir = 'auto';
   const top = el('div', 'card-top', '', [el('span', 'label', label), el('span', 'grow'), side]);
   const chart = mountChart({ color, height: 56, capacity: HISTORY_POINTS, format, intervalSeconds: INTERVAL_SECONDS });
   const sub = el('div', 'sub num');
+  sub.dir = 'auto';
   const card = el('div', 'card', '', [top, value, chart.element, sub]);
   return { card, value, side, sub, chart };
 };
@@ -54,7 +76,9 @@ const memory = statCard('Memory', COLORS.memory, formatBytes);
 const grid = el('div', 'grid', '', [cpu.card, memory.card]);
 
 const appValue = el('span', 'big num', '–');
+appValue.dir = 'auto';
 const appCpuValue = el('span', 'sub num');
+appCpuValue.dir = 'auto';
 const appChart = mountChart({ color: COLORS.app, height: 44, capacity: HISTORY_POINTS, format: formatBytes, intervalSeconds: INTERVAL_SECONDS });
 const appStack = el('div', 'stack');
 const appLegend = el('div', 'legend');
@@ -98,6 +122,13 @@ const footnote = el('div', 'footnote', 'Process CPU counts 100% per core, as Act
 
 root.append(banner, head, grid, appCard, serversSection, processesSection, outsideSection, footnote);
 
+const setHostIdentity = (hostname: string): void => {
+  hostScope.hidden = !mobileSurface;
+  setText(hostScope, mobileSurface ? `${connectedHostLabel()} ·` : '');
+  setText(hostNameValue, hostname);
+  hostName.title = mobileSurface ? `${connectedHostLabel()}: ${hostname}` : hostname;
+};
+
 // ----- Stop -----
 
 let refresh: () => void = () => undefined;
@@ -109,6 +140,7 @@ let refresh: () => void = () => undefined;
 const stopButton = (label: string, question: string, target: StopRequest): HTMLButtonElement => {
   const button = el('button', 'stop', label);
   button.type = 'button';
+  button.dir = 'auto';
   let armed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const disarm = (): void => {
@@ -157,6 +189,8 @@ const roleOf = (row: ProcessRow): Role => (row.pid === rootPid ? 'root' : row.la
 const numberCells = () => {
   const cpu = el('span');
   const memory = el('span', 'cell num');
+  cpu.dir = 'auto';
+  memory.dir = 'auto';
   const set = (cpuValue: number | null, memoryValue: number): void => {
     // Below one percent of a core a number is noise; it stays readable but recedes.
     const className = cpuValue !== null && cpuValue >= 1 ? 'cell num' : 'cell num quiet';
@@ -168,8 +202,11 @@ const numberCells = () => {
 };
 
 const textBlock = (title: string, detail: string) => {
-  const titleLine = el('span', 'title-line', '', [el('span', 'pname', title)]);
+  const processName = el('span', 'pname', title);
+  processName.dir = 'auto';
+  const titleLine = el('span', 'title-line', '', [processName]);
   const detailLine = el('span', 'pdetail');
+  detailLine.dir = 'ltr';
   const setDetail = (text: string): void => {
     setText(detailLine, text);
     detailLine.hidden = text === '';
@@ -212,6 +249,7 @@ const jobRow = (job: Job, stoppable: boolean): Keyed<Job> => {
   // Unfolded, commands wrap in full instead of ending in an ellipsis.
   const wrapper = el('div', 'job-wrap', '', [line]);
   const more = el('div', 'more');
+  more.dir = 'auto';
   const members = el('div', 'members', '', [more]);
   const memberRows = new Map<string, Keyed<ProcessRow>>();
   let current = job;
@@ -308,7 +346,10 @@ const groupBlock = (group: ProcessGroup): Keyed<ProcessGroup> => {
   dot.style.background = COLORS[group.id];
   const stopAll = hasStopAll(group) ? stopButton('Stop all', 'Stop everything running in the terminal?', { kind: 'terminals' }) : undefined;
   const count = el('span', 'count');
-  const name = el('span', 'gname', '', [dot, el('b', '', GROUP_LABELS[group.id]), count]);
+  count.dir = 'auto';
+  const groupLabel = el('b', '', GROUP_LABELS[group.id]);
+  groupLabel.dir = 'auto';
+  const name = el('span', 'gname', '', [dot, groupLabel, count]);
   const cells = numberCells();
   const header = el('div', 'group-head foldable', '', [name, actionCell(stopAll), cells.cpu, cells.memory]);
   header.tabIndex = 0;
@@ -352,12 +393,20 @@ const serverKey = (server: DevServer): string => [
 ].join('\u0000');
 
 const serverRow = (server: DevServer): Keyed<DevServer> => {
-  const ports = server.ports.map((port) => portButton(host, port));
-  const title = el('div', 'title-line', '', [...ports, el('span', 'pname strong', server.name), el('span', 'origin', SERVER_ORIGIN[server.group])]);
+  const ports = server.ports.map((port) => portButton(host, port, mobileSurface));
+  const serverName = el('span', 'pname strong', server.name);
+  serverName.dir = 'auto';
+  const origin = el('span', 'origin', SERVER_ORIGIN[server.group]);
+  origin.dir = 'auto';
+  const title = el('div', 'title-line', '', [...ports, serverName, origin]);
   const stop = server.job ? stopButton('Stop', `Stop ${server.job.title}?`, { kind: 'job', pid: server.job.pid, name: server.job.name }) : undefined;
   const who = el('div', 'who', '', [title]);
   const detail = server.job?.title ?? '';
-  if (detail) who.append(el('span', 'pdetail', detail));
+  if (detail) {
+    const detailLine = el('span', 'pdetail', detail);
+    detailLine.dir = 'ltr';
+    who.append(detailLine);
+  }
   const cells = numberCells();
   cells.set(server.cpu, server.memory);
   const row = el('div', 'row server', '', [who, actionCell(stop), cells.cpu, cells.memory]);
@@ -382,8 +431,11 @@ const legendRow = (group: ProcessGroup): Keyed<ProcessGroup> => {
   const swatch = el('span', 'swatch');
   swatch.style.background = COLORS[group.id];
   const count = el('span', 'muted');
+  count.dir = 'auto';
   const cpuValue = el('span', 'value num muted');
   const memoryValue = el('span', 'value num');
+  cpuValue.dir = 'auto';
+  memoryValue.dir = 'auto';
   const update = (next: ProcessGroup): void => {
     setText(count, ` · ${next.count} ${next.count === 1 ? 'process' : 'processes'}`);
     setText(cpuValue, formatPercent(next.cpu));
@@ -437,7 +489,7 @@ function render(snapshot: Snapshot): void {
   const { system, app } = snapshot;
   rootPid = app.rootPid;
 
-  setText(hostName, system.hostname);
+  setHostIdentity(system.hostname);
   setText(hostMeta, [platformName(system.platform), system.arch, system.cpuModel, `up ${formatUptime(system.uptimeSeconds)}`].filter(Boolean).join(' · '));
   setText(live, `Live · every ${INTERVAL_SECONDS} s`);
   live.classList.remove('stale');
@@ -486,7 +538,11 @@ const showFailure = (next: PollFailure): void => {
 let started = false;
 host.onReady((context) => {
   applyHostReady(context, document.documentElement);
+  const direction = applyHostLocale(context.locale, document.documentElement);
+  document.documentElement.style.setProperty('--resource-monitor-chevron-open-angle', direction === 'rtl' ? '-90deg' : '90deg');
   setLocale(context.locale);
+  mobileSurface = isMobileResourceMonitorFrame(window.name);
+  setHostIdentity(lastSnapshot?.system.hostname ?? '–');
   if (context.features?.deviceStorage === true && !deviceStorage) {
     deviceStorage = true;
     void loadCollapsed();

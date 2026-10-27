@@ -7,6 +7,7 @@ import { mountChart } from '../shared/chart.ts';
 import { FAILURE_TEXT, POLL_MS, portButton, startPolling } from '../shared/client.ts';
 import { el, reconcile, setText, type Keyed } from '../shared/dom.ts';
 import { COLORS, formatBytes, formatPercent, setLocale } from '../shared/format.ts';
+import { applyHostLocale } from '../shared/locale.ts';
 import { HISTORY_POINTS, type Snapshot } from '../shared/snapshot.ts';
 import { BASE_STYLE, STATUS_STYLE } from '../shared/style.ts';
 
@@ -26,13 +27,17 @@ const meter = (color: string) => {
 
 const appChart = mountChart({ color: COLORS.app, height: 18, capacity: HISTORY_POINTS, format: formatBytes, intervalSeconds: POLL_MS / 1000 });
 const appValue = el('span', 'value num', '–');
+appValue.dir = 'auto';
 appValue.title = 'Memory and CPU of OpenChamber, OpenCode, and everything they started. CPU counts 100% per core.';
 const cpuMeter = meter(COLORS.cpu);
 const cpuValue = el('span', 'value num', '–');
+cpuValue.dir = 'auto';
 const memoryMeter = meter(COLORS.memory);
 const memoryValue = el('span', 'value num', '–');
+memoryValue.dir = 'auto';
 const ports = el('div', 'ports');
 const serversValue = el('span', 'value num');
+serversValue.dir = 'auto';
 
 const appLine = el('div', 'line', '', [el('span', 'what', 'OpenChamber'), appChart.element, appValue]);
 const cpuLine = el('div', 'line', '', [el('span', 'what', 'CPU'), cpuMeter.element, cpuValue]);
@@ -40,6 +45,7 @@ const memoryLine = el('div', 'line', '', [el('span', 'what', 'Memory'), memoryMe
 const serversLine = el('div', 'line', '', [el('span', 'what', 'Dev servers'), ports, serversValue]);
 serversLine.hidden = true;
 const note = el('div', 'note', 'Reading…');
+note.dir = 'auto';
 root.append(note, appLine, cpuLine, memoryLine, serversLine);
 for (const line of [appLine, cpuLine, memoryLine]) line.hidden = true;
 
@@ -80,6 +86,7 @@ new ResizeObserver(() => {
 let started = false;
 host.onReady((context) => {
   applyHostReady(context, document.documentElement);
+  applyHostLocale(context.locale, document.documentElement);
   setLocale(context.locale);
   if (started) return;
   started = true;

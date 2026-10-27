@@ -1,7 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { ProcessRow } from './snapshot.ts';
-import { commandArguments, formatBytes, formatPercent, jobDetail, processLabel } from './format.ts';
+import {
+  commandArguments,
+  connectedHostLabel,
+  formatBytes,
+  formatPercent,
+  jobDetail,
+  processLabel,
+  RESOURCE_MONITOR_SUPPORTED_LOCALES,
+  setLocale,
+} from './format.ts';
 
 describe('commandArguments', () => {
   test('drops the executable path the row already names', () => {
@@ -62,5 +71,24 @@ describe('formatting', () => {
     expect(formatPercent(4.25)).toBe('4.3%');
     expect(formatPercent(44.4)).toBe('44%');
     expect(formatPercent(250)).toBe('250%');
+  });
+
+  test('labels the host snapshot in every OpenChamber locale', () => {
+    expect(RESOURCE_MONITOR_SUPPORTED_LOCALES).toHaveLength(15);
+    for (const supportedLocale of RESOURCE_MONITOR_SUPPORTED_LOCALES) {
+      setLocale(supportedLocale);
+      expect(connectedHostLabel().length).toBeGreaterThan(0);
+    }
+    setLocale('en');
+    expect(connectedHostLabel()).toBe('Connected host');
+  });
+
+  test('uses base RTL translations for regional host locales', () => {
+    setLocale('ar-SA');
+    expect(connectedHostLabel()).toBe('المضيف المتصل');
+    setLocale('he-IL');
+    expect(connectedHostLabel()).toBe('המארח המחובר');
+    setLocale('en-US');
+    expect(connectedHostLabel()).toBe('Connected host');
   });
 });

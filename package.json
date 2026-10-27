@@ -1,7 +1,7 @@
 {
   "name": "openchamber-resource-monitor",
-  "version": "1.4.0",
-  "description": "CPU and memory of your machine, of OpenChamber and OpenCode with everything they started, and of the dev servers running under them",
+  "version": "1.4.1",
+  "description": "CPU and memory of the connected OpenChamber host, OpenChamber and OpenCode with everything they started, and the dev servers running under them",
   "private": true,
   "type": "module",
   "license": "MIT",

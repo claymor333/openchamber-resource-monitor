@@ -1,6 +1,6 @@
 # Resource Monitor for OpenChamber
 
-See what your machine is doing and how much of it OpenChamber takes: CPU and memory for the whole system, for OpenChamber and OpenCode with everything they started, and for the dev servers running under them.
+See what the connected OpenChamber host is doing and how much of it OpenChamber takes: host CPU and memory, OpenChamber and OpenCode with everything they started, and the dev servers running under them.
 
 The rail panel has live CPU and memory charts and OpenChamber's footprint split into the app, OpenCode, and the built-in terminal. What an agent or the terminal started is shown as jobs: one row per command (`bun run dev`, `claude`) with the CPU, memory and ports of everything under it, folded by default; unfold one to see the processes in it worth a look. Dev servers are listed with their ports, who started them, and what they cost. A short readout in the chat's Work Status panel shows the same numbers at a glance. OpenChamber versions that draw extension sections themselves build it from the service's `/status` answer, with no page of its own; older ones load `status/index.html`.
 
@@ -8,9 +8,11 @@ Stop on a dev server or a terminal job ends that command with everything it star
 
 ## Install
 
-In OpenChamber, open Settings → Integrations and press Install on the Resource Monitor card, or add this repository's Git URL in Settings → Extensions. Approve the local service when asked: the numbers come from a small process OpenChamber starts next to the panel.
+In OpenChamber, install the Resource Monitor card from Settings → Integrations. The card installs `https://github.com/claymor333/openchamber-resource-monitor`. On web and desktop, you can also add this repository's Git URL in Settings → Extensions. Approve the service when asked: it runs next to OpenChamber on the connected host, not on the phone.
 
-Web and desktop, on macOS, Linux and Windows. The phone app and VS Code don't load extensions.
+Web and desktop run the full extension as before. The mobile app supports this curated Resource Monitor panel only; other guest extensions and VS Code remain unsupported there. An existing install from the upstream `openchamber/openchamber-resource-monitor` repo is not migrated automatically: remove it in Settings → Extensions, then install the catalog copy and approve the service again. The service can inspect and stop server processes only after the user approves its existing permissions.
+
+On mobile, the full panel appears in the right-hand workspace. Its Work Status summary is not shown there. Dev-server ports are read-only information on mobile; no forwarding tunnel is opened.
 
 ## How it finds OpenChamber's processes
 
@@ -34,7 +36,7 @@ When the connected OpenChamber runs on another machine, the monitor shows that m
 | Linux | `/proc` | `/proc/net/tcp` and each process's sockets | `/proc/meminfo` |
 | Windows | one PowerShell kept running (`Get-CimInstance Win32_Process`) | `netstat -ano` | Node's `os` |
 
-Sampling runs every 2 seconds while the panel or the Work Status section is on screen. Twenty seconds after the last view it stops, and so does the PowerShell helper on Windows.
+Sampling runs every 2 seconds while the panel or the Work Status section is on screen. The shared service stays alive while any viewer is polling; twenty seconds after the last request it stops, along with the PowerShell helper on Windows.
 
 ## Build
 

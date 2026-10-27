@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import os from 'node:os';
 
 import type { RawProcess } from './parse.ts';
 import { Sampler } from './sampler.ts';
@@ -29,6 +30,8 @@ test('a failed process read keeps the last OpenChamber numbers instead of zeros'
   await new Promise((resolve) => setTimeout(resolve, 20));
   const good = await sampler.sample();
   expect(good.app.memory).toBe(500 * MB);
+  expect(good.system.hostname).toBe(os.hostname());
+  expect(good.system.memoryTotal).toBe(os.totalmem());
   const appPoints = good.history.app.memory.length;
 
   fail = true;

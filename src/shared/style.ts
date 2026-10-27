@@ -5,7 +5,8 @@ export const BASE_STYLE = `
   * { box-sizing: border-box; }
   .num { font-variant-numeric: tabular-nums; }
   .muted { color: var(--oc-muted); }
-  .chart { position: relative; width: 100%; overflow: hidden; }
+  /* Time-series axes intentionally remain left-to-right in RTL locales. */
+  .chart { position: relative; width: 100%; overflow: hidden; direction: ltr; }
   .chart svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   .chart-grid { stroke: var(--oc-border); stroke-width: 1; vector-effect: non-scaling-stroke; opacity: .5; fill: none; }
   .chart-cursor, .chart-dot, .chart-tip { position: absolute; pointer-events: none; opacity: 0; }
@@ -22,6 +23,8 @@ export const BASE_STYLE = `
   .port { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border: 0; border-radius: 4px; font: 11px var(--oc-mono); cursor: pointer;
     background: color-mix(in srgb, var(--oc-primary) 14%, transparent); color: var(--oc-primary-text, var(--oc-primary)); }
   .port:hover, .port:focus-visible { outline: none; background: color-mix(in srgb, var(--oc-primary) 24%, transparent); }
+  .port-readonly { cursor: default; }
+  .port-readonly:hover, .port-readonly:focus-visible { background: color-mix(in srgb, var(--oc-primary) 14%, transparent); }
 `;
 
 export const PANEL_STYLE = `
@@ -29,7 +32,9 @@ export const PANEL_STYLE = `
   #root { display: flex; flex-direction: column; gap: 14px; padding: 12px 12px 20px; }
   .head { display: flex; align-items: flex-start; gap: 8px; }
   .head .titles { min-width: 0; flex: 1; }
-  .host-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .host-name { display: flex; align-items: baseline; gap: 5px; min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; white-space: nowrap; }
+  .host-scope { flex: none; color: var(--oc-muted); font-size: 11px; font-weight: 500; }
+  .host-name-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .host-meta { color: var(--oc-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .live { display: inline-flex; align-items: center; gap: 6px; color: var(--oc-muted); font-size: 11px; white-space: nowrap; padding-top: 2px; }
   .live::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--oc-success); }
@@ -50,7 +55,7 @@ export const PANEL_STYLE = `
   .legend-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; }
   .legend-row .swatch { width: 8px; height: 8px; border-radius: 2px; }
   .legend-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .legend-row .value { text-align: right; min-width: 56px; }
+  .legend-row .value { text-align: end; min-width: 56px; }
   .section { display: flex; flex-direction: column; gap: 6px; }
   .section-head { display: flex; align-items: baseline; gap: 8px; padding: 0 2px; }
   .section-head .grow { flex: 1; }
@@ -62,7 +67,7 @@ export const PANEL_STYLE = `
   .action { display: flex; align-items: center; justify-content: flex-end; }
   .action:empty { display: block; }
   .cols { padding: 0 2px 4px; color: var(--oc-muted); font-size: 11px; border-bottom: 1px solid var(--oc-border); }
-  .cell { text-align: right; white-space: nowrap; }
+  .cell { text-align: end; white-space: nowrap; }
   .quiet { color: var(--oc-muted); }
   /* Three levels, told apart by size, weight and indent rather than boxes:
      group heading, rows on a rail in the group's colour, unfolded members deeper and quieter. */
@@ -70,8 +75,8 @@ export const PANEL_STYLE = `
   .group { display: flex; flex-direction: column; padding: 4px 0 10px; border-bottom: 1px solid var(--oc-border); }
   .group-head { padding: 12px 2px 6px; font-size: 13px; }
   .group-head .cell { font-weight: 600; }
-  .group > .row, .group > .job-wrap { margin-left: 4px; padding-left: 12px;
-    border-left: 2px solid color-mix(in srgb, var(--group-color, var(--oc-border)) 40%, transparent); }
+  .group > .row, .group > .job-wrap { margin-inline-start: 4px; padding-inline-start: 12px;
+    border-inline-start: 2px solid color-mix(in srgb, var(--group-color, var(--oc-border)) 40%, transparent); }
   .group > .row { padding-top: 5px; padding-bottom: 5px; }
   .group > .job-wrap > .row { padding: 5px 2px; }
   .group .row .cell { color: color-mix(in srgb, var(--oc-fg) 80%, transparent); }
@@ -86,17 +91,17 @@ export const PANEL_STYLE = `
   .pname.strong { font-weight: 600; flex: none; max-width: 50%; }
   .pdetail { color: var(--oc-muted); font: 11px/1.35 var(--oc-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .job.foldable, .group-head.foldable { cursor: pointer; }
-  .group-head.foldable .gname::before { content: ''; flex: none; width: 0; height: 0; margin-right: 1px;
-    border-left: 4px solid var(--oc-muted); border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent; transition: transform .15s ease; }
-  .group-head.foldable.open .gname::before { transform: rotate(90deg); }
+  .group-head.foldable .gname::before { content: ''; flex: none; width: 0; height: 0; margin-inline-end: 1px;
+    border-inline-start: 4px solid var(--oc-muted); border-block: 3.5px solid transparent; transition: transform .15s ease; }
+  .group-head.foldable.open .gname::before { transform: rotate(var(--resource-monitor-chevron-open-angle, 90deg)); }
   /* Focus draws no ring, like the app: a focused row takes the hover fill. */
   .group-head.foldable:focus-visible, .job.foldable:focus-visible { outline: none; border-radius: 4px; background: var(--oc-hover); }
-  .job.foldable .title-line::before { content: ''; flex: none; width: 0; height: 0; margin: 0 2px 0 1px;
-    border-left: 4px solid var(--oc-muted); border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent; transition: transform .15s ease; }
-  .job.foldable.open .title-line::before { transform: rotate(90deg); }
+  .job.foldable .title-line::before { content: ''; flex: none; width: 0; height: 0; margin-block: 0; margin-inline: 1px 2px;
+    border-inline-start: 4px solid var(--oc-muted); border-block: 3.5px solid transparent; transition: transform .15s ease; }
+  .job.foldable.open .title-line::before { transform: rotate(var(--resource-monitor-chevron-open-angle, 90deg)); }
   .job-wrap.open .pdetail { white-space: normal; overflow-wrap: anywhere; }
   .pdetail { user-select: text; }
-  .members { display: flex; flex-direction: column; padding: 0 0 6px 16px; }
+  .members { display: flex; flex-direction: column; padding-block: 0 6px; padding-inline: 16px 0; }
   .row.member { padding: 3px 2px; font-size: 11.5px; }
   .row.member .pname { color: var(--oc-muted); }
   .row.member .pdetail { font-size: 10.5px; }
@@ -108,6 +113,10 @@ export const PANEL_STYLE = `
   .stop.armed { color: var(--oc-error-text, var(--oc-error)); font-weight: 600; }
   .stop:disabled { cursor: default; opacity: .6; }
   .stop:focus-visible { outline: none; }
+  @media (any-pointer: coarse) {
+    .stop { min-width: 44px; min-height: 44px; padding: 0 8px; }
+    .job.foldable, .group-head.foldable { min-height: 44px; }
+  }
   /* The tint says warning or error; no border. */
   .banner { padding: 8px 12px; border-radius: var(--oc-radius);
     background: color-mix(in srgb, var(--oc-warning) 10%, transparent); color: var(--oc-warning-text, var(--oc-fg)); }
@@ -122,9 +131,9 @@ export const STATUS_STYLE = `
   #root { display: flex; flex-direction: column; gap: 6px; padding: 2px 0 4px; }
   .line { display: grid; grid-template-columns: 84px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 18px; }
   .line .what { color: var(--oc-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .line .value { text-align: right; white-space: nowrap; }
+  .line .value { text-align: end; white-space: nowrap; }
   .meter { position: relative; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--oc-fg) 8%, transparent); overflow: hidden; }
-  .meter > span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; transition: width .4s ease; }
+  .meter > span { position: absolute; inset-inline-start: 0; top: 0; bottom: 0; border-radius: 2px; transition: width .4s ease; }
   .ports { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
   .note { color: var(--oc-muted); }
   .note.error { color: var(--oc-error-text, var(--oc-fg)); }

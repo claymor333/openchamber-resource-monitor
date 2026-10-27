@@ -2,6 +2,30 @@
 import type { GroupId, ProcessRow } from './snapshot.ts';
 
 let locale = 'en';
+export const RESOURCE_MONITOR_SUPPORTED_LOCALES = [
+  'en', 'nl', 'de', 'fr', 'es', 'ja', 'pt-BR', 'uk', 'ko', 'pl', 'zh-CN', 'zh-TW', 'tr', 'ar', 'he',
+] as const;
+type ResourceMonitorLocale = (typeof RESOURCE_MONITOR_SUPPORTED_LOCALES)[number];
+
+const HOST_SCOPE_LABELS: Record<ResourceMonitorLocale, string> = {
+  en: 'Connected host',
+  nl: 'Verbonden host',
+  de: 'Verbundener Host',
+  fr: 'Hôte connecté',
+  es: 'Host conectado',
+  ja: '接続先のホスト',
+  'pt-BR': 'Host conectado',
+  uk: 'Підключений хост',
+  ko: '연결된 호스트',
+  pl: 'Połączony host',
+  'zh-CN': '已连接的主机',
+  'zh-TW': '已連線的主機',
+  tr: 'Bağlı ana makine',
+  ar: 'المضيف المتصل',
+  he: 'המארח המחובר',
+};
+const HOST_SCOPE_LABELS_BY_TAG: Readonly<Record<string, string>> = HOST_SCOPE_LABELS;
+
 /** A tag Intl does not know (`en_US`) falls back to English instead of throwing on every number. */
 export const setLocale = (next: string): void => {
   try {
@@ -9,6 +33,12 @@ export const setLocale = (next: string): void => {
   } catch {
     locale = 'en';
   }
+};
+
+/** Labels the process snapshot as the connected server's data in the mobile panel. */
+export const connectedHostLabel = (): string => {
+  const baseLocale = locale.split(/[-_]/, 1)[0]?.toLowerCase() ?? '';
+  return HOST_SCOPE_LABELS_BY_TAG[locale] ?? HOST_SCOPE_LABELS_BY_TAG[baseLocale] ?? HOST_SCOPE_LABELS_BY_TAG.en ?? 'Connected host';
 };
 
 const number = (value: number, digits: number): string => new Intl.NumberFormat(locale, {
